@@ -8,7 +8,15 @@
     t2 = s.move(2, -500)                  # M2 runs while M1 is moving
     s.wait(t1); s.wait(t2)                # block until each finishes
     s.stop(1)                             # cancel M1 (decelerate + flush queue)
+
+Console (the default when run as a script): type raw protocol commands, or pipe them in
+from another program; replies and events are written to stdout, one per line.
+
+    python stepper4_host.py /dev/ttyUSB0 --speed 2000 --accel 1:8000 --idle 1000
+    other_program | python stepper4_host.py /dev/ttyUSB0 --idle 1000
 """
+import argparse
+import sys
 import threading
 import time
 import serial
@@ -22,7 +30,7 @@ class Stepper4Error(Exception):
 
 
 class Stepper4:
-    def __init__(self, port="/dev/ttyACM0", baud=115200, on_event=None, watchdog_ms=0):
+    def __init__(self, port="/dev/ttyUSB0", baud=115200, on_event=None, watchdog_ms=0):
         self.ser = serial.Serial(port, baud, timeout=0.1)
         time.sleep(2.0)                   # Uno resets when the port opens
         self.ser.reset_input_buffer()
@@ -122,6 +130,7 @@ class Stepper4:
     def clear(self, motor=0): self.cmd(f"CLEAR {motor}")
     def speed(self, motor, sps):   self.cmd(f"SPEED {motor} {sps}")
     def accel(self, motor, spss):  self.cmd(f"ACCEL {motor} {spss}")
+    def idle(self, motor, ms):     self.cmd(f"IDLE {motor} {ms}")   # driver power-down delay, 0 = hold
     def zero(self, motor, pos=0):  self.cmd(f"ZERO {motor} {pos}")
     def release(self, motor, direction): self.cmd(f"RELEASE {motor} {'+' if direction >= 0 else '-'}")
     def reset(self, motor=0):  self.cmd(f"RESET {motor}")
@@ -159,14 +168,132 @@ class Stepper4:
         self.ser.close()
 
 
-if __name__ == "__main__":
-    import sys
-    s = Stepper4(sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyACM0",
-                 on_event=lambda e: print("EVT", *e))
+CONSOLE_HELP = """\
+Type any protocol command (e.g. MOVE 1 2000 3000, STATUS, INFO). Tags are added
+automatically and shown in the reply; EVT lines print as they arrive.
+  !            halt everything now (real-time byte)
+  wait <tag>   block until that command ends (Ctrl-C to give up)
+  help         this text
+  quit / exit  leave (Ctrl-D also works)"""
+
+_out_lock = threading.Lock()
+_interactive = sys.stdin.isatty()
+
+
+def _out(text):
+    """Write one line to stdout. On a terminal, redraw the prompt and anything typed so far."""
+    with _out_lock:
+        if _interactive:
+            try:
+                import readline
+                buf = readline.get_line_buffer()
+            except ImportError:
+                buf = ""
+            sys.stdout.write("\r\033[K" + text + "\ns4> " + buf)
+            sys.stdout.flush()
+        else:
+            print(text, flush=True)
+
+
+def run_line(s, line):
+    """Run one console line, printing its reply. Returns False on ERR or bad input."""
+    word = line.split()[0].lower()
+    try:
+        if word == "help":
+            print(CONSOLE_HELP)
+        elif line == "!":
+            s.ser.write(b"!")
+        elif word == "wait":
+            print(" ".join(s.wait(int(line.split()[1]))), flush=True)
+        else:
+            if line.startswith("#"):          # drop a user tag; cmd() adds its own
+                line = line.split(None, 1)[1] if " " in line else ""
+            tag, extra = s.cmd(line)
+            with _out_lock:
+                for f in extra:
+                    print(" ".join(f))
+                print(f"OK #{tag}", flush=True)
+        return True
+    except Stepper4Error as e:
+        print("ERR", e, flush=True)
+    except (IndexError, ValueError):
+        print("ERR usage: wait <tag>", flush=True)
+    return False
+
+
+def console(s):
+    prompt = ""
+    if _interactive:
+        try:
+            import readline  # noqa: F401  (line editing + history for input())
+        except ImportError:
+            pass
+        print(CONSOLE_HELP)
+        prompt = "s4> "
+    while True:
+        try:
+            line = input(prompt).strip()
+        except EOFError:                      # Ctrl-D, or the feeding program closed the pipe
+            if _interactive:
+                print()
+            return
+        except KeyboardInterrupt:
+            print()
+            return
+        if not line:
+            continue
+        if line.lower() in ("quit", "exit"):
+            return
+        try:
+            run_line(s, line)
+        except KeyboardInterrupt:             # Ctrl-C during "wait" only abandons the wait
+            print()
+
+
+def demo(s):
     a = s.move(1, 2000, 3000)
-    b = s.move(2, -800)
+    s.move(2, -800)
     time.sleep(0.3)
     print(s.status())
     s.stop(2)                             # cancel M2 mid-move
     print(s.wait(a))
-    s.close()
+
+
+def _per_motor(verb):
+    """argparse type for VALUE (all motors) or MOTOR:VALUE -> 'VERB m value'."""
+    def parse(v):
+        m, _, val = v.rpartition(":")
+        try:
+            return f"{verb} {int(m or 0)} {int(val)}"
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"expected VALUE or MOTOR:VALUE, got {v!r}")
+    return parse
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(
+        description="stepper4 console. Startup options run in the order given, then the console "
+                    "reads commands from stdin (a terminal or a pipe from another program).")
+    ap.add_argument("port", nargs="?", default="/dev/ttyUSB0")
+    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--watchdog", type=int, default=0, metavar="MS", help="enable host watchdog")
+    ap.add_argument("--speed", action="append", dest="startup", type=_per_motor("SPEED"),
+                    metavar="[M:]SPS", help="default speed, steps/s (all motors, or motor M)")
+    ap.add_argument("--accel", action="append", dest="startup", type=_per_motor("ACCEL"),
+                    metavar="[M:]SPSS", help="acceleration, steps/s^2")
+    ap.add_argument("--idle", action="append", dest="startup", type=_per_motor("IDLE"),
+                    metavar="[M:]MS", help="idle time before drivers power down, 0 = hold")
+    ap.add_argument("-c", "--cmd", action="append", dest="startup", metavar="CMD",
+                    help='any protocol command, e.g. -c "ZERO 1"')
+    ap.add_argument("--demo", action="store_true", help="run the scripted two-motor demo instead")
+    args = ap.parse_args()
+
+    s = Stepper4(args.port, args.baud, watchdog_ms=args.watchdog,
+                 on_event=lambda e: _out("EVT " + " ".join(e)))
+    try:
+        for line in args.startup or []:
+            if not run_line(s, line):
+                sys.exit(f"startup command failed: {line}")
+        demo(s) if args.demo else console(s)
+    finally:
+        s.close()

@@ -44,6 +44,7 @@ Motion commands go into that motor's queue, which holds 8 commands. Control comm
 | `CLEAR [m]` |  | immediate | Flush the queue and let the current command finish |
 | `SPEED m sps` | 1–10000; m=0 for all | immediate | Default speed for commands that start later |
 | `ACCEL m spss` | 1–200000 | immediate | Acceleration, steps/s² |
+| `IDLE m ms` | 0–3,600,000; m=0 for all; 0 = hold | immediate | How long this motor must be idle before the drivers may power down (see below) |
 | `ZERO m [pos]` |  | immediate | Set the position counter. The motor must be idle |
 | `RELEASE m dir` | `+`/`-` | immediate | Back a motor off a switch that is already closed (for example at boot) |
 | `STATUS [m]` |  | immediate | One `STA` line per motor |
@@ -54,6 +55,10 @@ Motion commands go into that motor's queue, which holds 8 commands. Control comm
 | `WD ms` | 0 = off, up to 60000 | immediate | Host watchdog: halt all motors if the host goes silent |
 | `PING` |  | immediate | Liveness check, and feeds the watchdog |
 | `!` | single byte | real-time | Halt everything now |
+
+`CFG` line (from INFO): `CFG m speed accel idle_ms`.
+
+Driver power-down: all four drivers share one enable pin, so they power down only when **every** motor has been idle for at least its own `IDLE` time. A motor set to 0 keeps all of them powered. Power-down sends `EVT DRVOFF 0 0`. The motors then hold no position, so they can be pushed or back-driven. The next motion command powers the drivers back up.
 
 `STA` line: `STA m state pos rate queued limit tag`. `state` is one of IDLE, RUN, DWELL, BACKOFF, FAULT, ESTOP. `rate` is signed steps/s, `limit` is 0 or 1, and `tag` belongs to the active command.
 
@@ -84,7 +89,7 @@ Events have the form `EVT TYPE motor tag [extra]`. A motor of `0` means the even
 | `CLEAR` |  | position | Back-off finished. Carries the same tag as the LIMIT |
 | `FAULT` | yes | `LIMIT_STUCK` | The switch never opened during back-off. Send RESET |
 | `LIMSW` |  | (tag field = 0/1) | The raw limit switch changed state |
-| `BOOT`, `ESTOP`, `HALT`, `WDOG` |  |  | System events, sent with motor 0 and tag 0 |
+| `BOOT`, `ESTOP`, `HALT`, `WDOG`, `DRVOFF` |  |  | System events, sent with motor 0 and tag 0 |
 
 ## Error codes
 
@@ -107,7 +112,7 @@ Events have the form `EVT TYPE motor tag [extra]`. A motor of `0` means the even
 
 Read the port on a dedicated thread and send commands from any thread. The reader matches each `OK`/`ERR` to its tag, and each terminal event to its tag. `stepper4_host.py` (pyserial) already does this.
 
-```python
+```
 from stepper4_host import Stepper4
 s = Stepper4("/dev/ttyACM0", on_event=print, watchdog_ms=1000)
 a = s.forward(1, 2000, speed=3000)   # returns tag immediately

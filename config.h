@@ -28,6 +28,9 @@
 #define ESTOP_ENABLED    0         // 1: use "Abort" header (A0) as hardware E-stop input
 #define ESTOP_ACTIVE_LOW 0         // 0: NC button to GND (pressed/broken wire = HIGH)
 #define QLEN             8         // command queue depth per motor
+#define DEFAULT_IDLE_MS  0UL       // per-motor idle time before drivers may power down; 0 = hold.
+                                   // EN is shared: drivers go off only when EVERY motor has been
+                                   // idle for its own time (any motor at 0 keeps them all on)
 
 // Per-motor direction inversion (M1..M4). Only referenced by stepgen.cpp.
 const bool DIR_INVERT[NUM_MOTORS] = { false, false, false, false };

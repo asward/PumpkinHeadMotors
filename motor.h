@@ -35,6 +35,8 @@ struct Motor {
   uint8_t  boPhase;    // backoff: 0 = until switch opens, 1 = clearance steps
   int32_t  boStart;
   bool     lastLim;    // last reported limit state (for LIMSW events)
+  uint32_t idleMs;     // idle time before this motor allows driver power-down, 0 = hold
+  uint32_t lastBusy;   // millis() when this motor was last not idle
 };
 
 extern Motor M[NUM_MOTORS];
@@ -55,6 +57,7 @@ void haltAll();
 void stopMotor(uint8_t i, bool flush);      // decelerated stop
 void startBackoff(uint8_t i);               // drive away from the switch in -tripDir
 void driversOn(bool on);                    // shared EN pin
+void serviceIdlePower();                    // power drivers down once all motors' idle times pass
 
 void latchEstop();                          // halt everything, disable drivers, latch
 bool estopInputActive();                    // hardware E-stop input state

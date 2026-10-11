@@ -82,7 +82,8 @@ static const __FlashStringHelper *dispatch(const char *c, char **a, uint8_t na, 
     for (uint8_t i = 0; i < NUM_MOTORS; i++) {
       Serial.print(F("CFG ")); Serial.print(i + 1);
       Serial.print(' '); Serial.print(M[i].defSpeed);
-      Serial.print(' '); Serial.println(M[i].accel);
+      Serial.print(' '); Serial.print(M[i].accel);
+      Serial.print(' '); Serial.println(M[i].idleMs);
     }
     return NULL;
   }
@@ -138,6 +139,14 @@ static const __FlashStringHelper *dispatch(const char *c, char **a, uint8_t na, 
       else if (c[1] == 'K') stopMotor(i, false);  // SKIP
       else flushQueue(i);                        // CLEAR
     }
+    return NULL;
+  }
+
+  if (!strcmp(c, "IDLE")) {                    // IDLE m ms: driver power-down delay, 0 = hold
+    if (na != 2) return F("SYNTAX");
+    if ((m = parseMotor(a[0], true)) < 0) return F("BADMOTOR");
+    if (!parseNum(a[1], &v) || v < 0 || v > 3600000L) return F("BADARG");
+    FOR_MOTORS(m) M[i].idleMs = (uint32_t)v;
     return NULL;
   }
 

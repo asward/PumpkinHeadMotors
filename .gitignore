@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Arduino / build output
+build/
+*.elf
+*.hex
+*.bin
+*.map
+.vscode/
+.pio/
+
+# Editor / OS
+*.swp
+*.swo
+*~
+.DS_Store

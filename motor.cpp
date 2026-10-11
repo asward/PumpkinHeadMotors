@@ -16,6 +16,7 @@ void motorsBegin() {
     M[i].state = ST_IDLE;
     M[i].defSpeed = DEFAULT_SPEED;
     M[i].accel = DEFAULT_ACCEL;
+    M[i].idleMs = DEFAULT_IDLE_MS;
   }
   pinMode(PIN_EN, OUTPUT);
   driversOn(false);
@@ -28,6 +29,22 @@ void driversOn(bool on) {
   if (on && !driversEnabled) { digitalWrite(PIN_EN, LOW); delay(2); }   // wake-up time
   if (!on) digitalWrite(PIN_EN, HIGH);
   driversEnabled = on;
+}
+
+// EN is shared, so power down only when every motor has been idle for its own idleMs.
+// Positions are no longer held after this; the next motion command re-enables the drivers.
+void serviceIdlePower() {
+  uint32_t now = millis();
+  bool off = driversEnabled;
+  for (uint8_t i = 0; i < NUM_MOTORS; i++) {
+    Motor &m = M[i];
+    if (m.state != ST_IDLE && m.state != ST_FAULT) m.lastBusy = now;
+    if (!m.idleMs || now - m.lastBusy < m.idleMs) off = false;
+  }
+  if (off) {
+    driversOn(false);
+    Serial.println(F("EVT DRVOFF 0 0"));
+  }
 }
 
 // ------------------------------ queue ------------------------------

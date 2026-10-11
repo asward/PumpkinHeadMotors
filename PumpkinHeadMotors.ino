@@ -55,4 +55,5 @@ void loop() {
   if (tick) { lastProfileUs = now; if (dt > 0.02f) dt = 0.02f; }
 
   for (uint8_t i = 0; i < NUM_MOTORS; i++) serviceMotor(i, tick, dt);
+  serviceIdlePower();
 }
